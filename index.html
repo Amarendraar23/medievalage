@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Medieval Open World - Phaser</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<style>
+  body { margin:0; }
+  canvas { display:block; margin:0 auto; background:#3a8ee6; }
+</style>
+</head>
+<body>
+
+<script>
+class BootScene extends Phaser.Scene {
+  constructor() {
+    super('Boot');
+  }
+  preload() {
+    // Load sprites (simple colored squares for demo)
+    this.load.image('ship', 'https://i.imgur.com/VKRY8Mf.png'); // ship placeholder
+    this.load.image('island', 'https://i.imgur.com/rnzTNBl.png'); // island placeholder
+    this.load.image('port', 'https://i.imgur.com/zkwFbsr.png'); // port placeholder
+    this.load.image('player', 'https://i.imgur.com/3RoHRUx.png'); // player placeholder
+    this.load.image('enemy', 'https://i.imgur.com/W9m2y1S.png'); // enemy placeholder
+    this.load.image('cannonball', 'https://i.imgur.com/J1WABN9.png'); // cannonball placeholder
+  }
+  create() {
+    this.scene.start('Game');
+  }
+}
+
+class GameScene extends Phaser.Scene {
+  constructor() {
+    super('Game');
+  }
+
+  create() {
+    // World size
+    this.worldWidth = 4000;
+    this.worldHeight = 4000;
+
+    // Mode: 'sea' or 'land'
+    this.mode = 'sea';
+
+    // Groups
+    this.islands = this.add.group();
+    this.ports = this.add.group();
+    this.enemies = this.add.group();
+    this.landEnemies = this.add.group();
+    this.cannonballs = this.add.group();
+
+    // Create islands and ports
+    for(let i=0; i<20; i++) {
+      let x = Phaser.Math.Between(100, this.worldWidth-100);
+      let y = Phaser.Math.Between(100, this.worldHeight-100);
+      if (Phaser.Math.Between(0,1) == 0) {
+        this.islands.add(this.add.sprite(x, y, 'island'));
+      } else {
+        this.ports.add(this.add.sprite(x, y, 'port'));
+      }
+    }
+
+    // Player ship
+    this.ship = this.physics.add.sprite(this.worldWidth/2, this.worldHeight/2, 'ship');
+    this.ship.setCollideWorldBounds(true);
+    this.ship.setDamping(true);
+    this.ship.setDrag(0.99);
+    this.ship.setMaxVelocity(300);
+
+    // Player on land sprite (hidden at start)
+    this.player = this.physics.add.sprite(0,0,'player').setVisible(false);
+
+    // Enemies on sea
+    for(let i=0; i<5; i++) {
+      let enemy = this.physics.add.sprite(
+        Phaser.Math.Between(200, this.worldWidth-200),
+        Phaser.Math.Between(200, this.worldHeight-200),
+        'enemy');
+      enemy.hp = 60;
+      this.enemies.add(enemy);
+      enemy.setCollideWorldBounds(true);
+      enemy.setBounce(1);
+    }
+
+    // Cameras
+    this.cameras.main.setBounds(0, 0, this.worldWidth, this.worldHeight);
+    this.cameras.main.startFollow(this.ship);
+
+    // Controls
+    this.cursors = this.input.keyboard.createCursorKeys();
+    this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this.keyQ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
+    this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.keyF = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+
+    // Health and gold
+    this.ship.hp = 100;
+    this.player.hp = 100;
+    this.gold = 0;
+
+    // Cannonball cooldown
+    this.lastShot = 0;
+  }
+
+  update(time, delta) {
+    if(this.mode === 'sea') {
+      this.updateSea(time, delta);
+    } else {
+      this.updateLand(time, delta);
+    }
+  }
+
+  updateSea(time, delta) {
+    // Ship controls
+    if(this.cursors.up.isDown) {
+      this.physics.velocityFromRotation(this.ship.rotation, 200, this.ship.body.acceleration);
+    } else if(this.cursors.down.isDown) {
+      this.physics.velocityFromRotation(this.ship.rotation, -100, this.ship.body.acceleration);
+    } else {
+      this.ship.setAcceleration(0);
+    }
+    if(this.cursors.left.isDown) {
+      this.ship.setAngularVelocity(-150);
+    } else if(this.cursors.right.isDown) {
+      this.ship.setAngularVelocity(150);
+    } else {
+      this.ship.setAngularVelocity(0);
+    }
+
+    // Fire cannonball (half second cooldown)
+    if(this.keySpace.isDown && time > this.lastShot + 500) {
+      let cannonball = this.physics.add.sprite(
+        this.ship.x + Math.cos(this.ship.rotation)*40,
+        this.ship.y + Math.sin(this.ship.rotation)*40,
+        'cannonball');
+      cannonball.setVelocity(
+        Math.cos(this.ship.rotation)*400,
+        Math.sin(this.ship.rotation)*400);
+      cannonball.lifespan = 2000; // milliseconds
+      this.cannonballs.add(cannonball);
+      this.lastShot = time;
+    }
+
+    // Update cannonballs lifespan
+    this.cannonballs.getChildren().forEach(ball => {
+      ball.lifespan -= delta;
+      if(ball.lifespan <= 0) {
+        ball.destroy();
+      }
+    });
+
+    // Docking at port (press E)
+    if(this.keyE.isDown) {
+      let docked = false;
+      this.ports.getChildren().forEach(port => {
+        let dist = Phaser.Math.Distance.Between(this.ship.x, this.ship.y, port.x, port.y);
+        if(dist < 100) {
+          docked = true;
+          this.mode = 'land';
+          this.player.setPosition(port.x, port.y);
+          this.player.setVisible(true);
+          this.ship.setVisible(false);
+          this.cameras.main.startFollow(this.player);
+
+          // Spawn land enemies nearby
+          this.landEnemies.clear(true,true);
+          for(let i=0; i<3; i++) {
+            let enemy = this.physics.add.sprite(
+              port.x + Phaser.Math.Between(-50, 50),
+              port.y + Phaser.Math.Between(-50, 50),
+              'enemy');
+            enemy.hp = 50;
+            this.landEnemies.add(enemy);
+          }
+        }
+      });
+      if(!docked) {
+        // maybe show "not near port" message here
+      }
+    }
+
+    // Enemy AI simple movement toward player ship
+    this.enemies.getChildren().forEach(enemy => {
+      let angleToPlayer = Phaser.Math.Angle.Between(enemy.x, enemy.y, this.ship.x, this.ship.y);
+      enemy.rotation = angleToPlayer;
+      this.physics.velocityFromRotation(angleToPlayer, 100, enemy.body.velocity);
+    });
+
+    // Collision between cannonballs and enemies
+    this.physics.overlap(this.cannonballs, this.enemies, (ball, enemy) => {
+      enemy.hp -= 20;
+      ball.destroy();
+      if(enemy.hp <= 0) {
+        enemy.destroy();
+        this.gold += 10;
+      }
+    });
+
+    // Collision between cannonballs and player ship (friendly fire off)
+    // (Skip or implement if you add enemy cannonballs)
+
+    // Keep player ship health check
+    if(this.ship.hp <= 0) {
+      this.scene.restart();
+    }
+  }
+
+  updateLand(time, delta) {
+    // Player movement
+    let speed = 200;
+    this.player.body.setVelocity(0);
+
+    if(this.cursors.left.isDown) {
+      this.player.body.setVelocityX(-speed);
+    } else if(this.cursors.right.isDown) {
+      this.player.body.setVelocityX(speed);
+    }
+    if(this.cursors.up.isDown) {
+      this.player.body.setVelocityY(-speed);
+    } else if(this.cursors.down.isDown) {
+      this.player.body.setVelocityY(speed);
+    }
+
+    this.player.body.velocity.normalize().scale(speed);
+
+    // Return to ship (press Q)
+    if(this.keyQ.isDown) {
+      this.mode = 'sea';
+      this.player.setVisible(false);
+      this.ship.setVisible(true);
+      this.cameras.main.startFollow(this.ship);
+    }
+
+    // Land combat: press F to attack enemies in range
+    if(this.keyF.isDown) {
+      this.landEnemies.getChildren().forEach(enemy => {
+        let dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y);
+        if(dist < 50) {
+          enemy.hp -= 25;
+          if(enemy.hp <= 0) enemy.destroy();
+        }
+      });
+    }
+  }
+}
+
+const config = {
+  type: Phaser.AUTO,
+  width: 800,
+  height: 600,
+  physics: {
+    default: 'arcade',
+    arcade: { debug: false }
+  },
+  scene: [BootScene, GameScene]
+};
+
+const game = new Phaser.Game(config);
+</script>
+
+</body>
+</html>
